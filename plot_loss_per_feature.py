@@ -53,15 +53,15 @@ def main():
     ranks = np.arange(F)
     fig, ax = plt.subplots(figsize=(9, 4.6))
     ax.scatter(ranks, mse_l2[order], s=22, color="#c8412c", alpha=0.85,
-               edgecolor="none", label=r"L$^2$ trained")
+               edgecolor="none", label=r"trained with L$^2$")
     ax.scatter(ranks, mse_l4[order], s=22, color="#3070b8", alpha=0.85,
-               edgecolor="none", label=r"L$^4$ trained")
-    # E[ReLU(x)^2 | x active] = 1/3 for x ~ Uniform(-1, 1)
+               edgecolor="none", label=r"trained with L$^4$")
+    # baseline 1/3 = E[x^2 | x ~ Uniform(0, 1)]: the per-feature MSE you would
+    # incur on positive-x samples by outputting 0 instead of x.
     ax.axhline(1.0 / 3.0, color="#444444", lw=1.6, ls=(0, (6, 4)), alpha=0.9,
-               label="MSE if model outputs 0 on active features")
-    ax.set_xlabel("feature index (sorted by L$^2$ MSE, descending)")
-    ax.set_ylabel("per-feature MSE on active samples")
-    ax.set_title(f"Per-feature loss, F = {F}, N = {N}, p = {P}")
+               label=r"MSE on $x > 0$ samples if model outputs 0")
+    ax.set_xlabel(r"feature index (sorted descending by MSE for model trained with L$^2$)")
+    ax.set_ylabel(r"per-feature MSE on $x > 0$ samples")
     ax.legend(loc="upper right", fontsize=10, framealpha=0.95)
     ax.grid(alpha=0.3, which="both")
     fig.tight_layout()

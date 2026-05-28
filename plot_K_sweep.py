@@ -54,18 +54,12 @@ def main():
         ax.plot(np.full_like(pts, K) + jit, pts, "s", color="#d62728",
                 markersize=3.5, alpha=0.4)
 
-    ax.axhline(1.0, color="#2ca02c", ls="--", lw=1.4,
-               label=f"trained 100k model  (L4={l4_trained:.2e})")
+    ax.axhline(1.0, color="#666666", ls="--", lw=1.4,
+               label="trained model")
 
     ax.set_xticks(K_list)
     ax.set_xlabel("codeword length K (active neurons per feature)")
-    ax.set_ylabel(r"$L^4$ loss  /  trained-model $L^4$ loss")
-    swap_str = f", {swaps // 1000}k overlap swaps" if swaps else ""
-    ax.set_title(
-        f"L4 vs codeword length: birregular vs random  "
-        f"(F={res['meta']['F']}, N={res['meta']['N']}, p={res['meta']['P']}, "
-        f"5 seeds each{swap_str})"
-    )
+    ax.set_ylabel(r"$L^4$ loss (ratio to trained model)")
     ax.grid(True, which="both", alpha=0.3)
     ax.legend(fontsize=10, loc="best")
     fig.tight_layout()

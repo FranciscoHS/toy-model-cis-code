@@ -42,11 +42,9 @@ def main():
     ax.plot(ranks, median, color="#c8412c", lw=2.0,
             label="median across features")
     ax.axhline(0.0, color="k", lw=0.7, ls=":", alpha=0.6)
-    ax.set_xlabel("entry rank within the column (largest first)")
+    ax.set_xlabel("entry rank in column")
     ax.set_ylabel("entry value")
     ax.set_xlim(1, N)
-    ax.set_title(r"100 encoder columns of $W_{\rm in}$ (one per feature), "
-                 "each sorted descending")
     ax.legend(loc="upper right", fontsize=10, framealpha=0.95)
     ax.grid(alpha=0.3)
     fig.tight_layout()
