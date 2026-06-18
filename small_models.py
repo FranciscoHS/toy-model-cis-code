@@ -24,6 +24,33 @@ class SimpleMLP(nn.Module):
         return (self.W_out @ torch.relu(self.W_in @ x.T)).T
 
 
+def random_embedding(n_features, d_embed, seed, device=DEVICE):
+    """Fixed (F, d) embedding with unit-norm rows; unembedding is its transpose.
+
+    This is the Braun et al. embedding: each feature is a random near-orthogonal
+    unit direction in a d_embed-dimensional residual stream. With d_embed > F the
+    map x -> x @ W_E is injective (W_E has full row rank), so the embedding is a
+    lossless change of basis.
+    """
+    g = torch.Generator(device="cpu").manual_seed(seed)
+    W_E = torch.randn(n_features, d_embed, generator=g)
+    W_E = W_E / W_E.norm(dim=1, keepdim=True)
+    return W_E.to(device)
+
+
+def effective_weights(W_in, W_out, W_E):
+    """Collapse an embedded model to its equivalent axis-aligned (N,F)/(F,N) form.
+
+    For input feature j active, the neuron preactivation is (W_in @ W_E.T)[:, j],
+    so W_in_eff is the feature->neuron encoder ("codeword" matrix) and W_out_eff
+    the neuron->feature decoder. The forward pass through (W_in_eff, W_out_eff) is
+    identical to the embedded forward.
+    """
+    W_in_eff = W_in @ W_E.T          # (N, F)
+    W_out_eff = W_E @ W_out          # (F, N)
+    return W_in_eff, W_out_eff
+
+
 def generate_batch(batch_size, n_features, p, device=DEVICE):
     """Sparse Bernoulli-Uniform features with target y = relu(x).
 

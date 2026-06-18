@@ -9,6 +9,7 @@ solution); a high CV means a few features carry most of the error (the naive
 solution). The point is that this varies smoothly with the exponent --- L^4 is
 not a special value.
 """
+import argparse
 import json
 from pathlib import Path
 
@@ -24,7 +25,16 @@ MIN_EXP = 2
 
 
 def main():
-    d = np.load(DATA, allow_pickle=True)
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--data", type=str, default=str(DATA))
+    ap.add_argument("--out", type=str, default=None)
+    args = ap.parse_args()
+    data_path = Path(args.data)
+    fig_out = Path(args.out) if args.out else (
+        Path("figures/cv_vs_exponent_embedded.png")
+        if "embedded" in data_path.name else FIG_OUT)
+
+    d = np.load(data_path, allow_pickle=True)
     json.loads(str(d["meta"]))  # validate the blob is present
     # npz keys look like 'exp_2', 'exp_2.5', ...
     keys = sorted((k for k in d.files if k.startswith("exp_")
@@ -51,9 +61,9 @@ def main():
     ax.set_xticklabels([f"{x:g}" for x in xs])  # integers, but 2.5 stays 2.5
     ax.grid(alpha=0.3, which="both")
     fig.tight_layout()
-    FIG_OUT.parent.mkdir(exist_ok=True)
-    fig.savefig(FIG_OUT, dpi=150)
-    print(f"saved -> {FIG_OUT}")
+    fig_out.parent.mkdir(exist_ok=True)
+    fig.savefig(fig_out, dpi=150)
+    print(f"saved -> {fig_out}")
 
 
 if __name__ == "__main__":

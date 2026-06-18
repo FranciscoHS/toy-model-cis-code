@@ -10,6 +10,7 @@ positive entries (the on-codeword positions), then a flat near-zero tail
 in the actual trained weights without invoking any thresholding or
 post-hoc concept.
 """
+import argparse
 from pathlib import Path
 
 import numpy as np
@@ -21,8 +22,19 @@ FIG_OUT = Path("figures/encoder_columns_100k.png")
 
 
 def main():
-    sd = torch.load(WEIGHTS, map_location="cpu")
-    W_in = sd["W_in"].numpy()                       # (N=50, F=100)
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--weights", type=str, default=str(WEIGHTS),
+                    help="checkpoint .pt; if it has W_in_eff (embedded model), "
+                         "the effective encoder W_in @ W_E.T is plotted")
+    ap.add_argument("--out", type=str, default=None)
+    args = ap.parse_args()
+
+    sd = torch.load(args.weights, map_location="cpu")
+    # embedded checkpoints store the effective (N,F) encoder; axis-aligned ones
+    # store W_in directly. Both are the feature->neuron codeword matrix.
+    W_in = sd["W_in_eff"].numpy() if "W_in_eff" in sd else sd["W_in"].numpy()
+    fig_out = Path(args.out) if args.out else (
+        Path("figures/encoder_columns_embedded.png") if "W_in_eff" in sd else FIG_OUT)
     N, F = W_in.shape
     sorted_cols = np.sort(W_in, axis=0)[::-1, :]    # descending, (N, F)
 
@@ -33,6 +45,18 @@ def main():
         row = sorted_cols[r]
         print(f"  rank {r:2d}:  median = {np.median(row):+.4f}   "
               f"min = {row.min():+.4f}   max = {row.max():+.4f}")
+
+    # codeword structure check (threshold tau=0.05, matching train_from_scratch)
+    TAU = 0.05
+    csize = (W_in > TAU).sum(axis=0)                 # K per feature (column)
+    on_vals = W_in[W_in > TAU]
+    off_vals = W_in[W_in <= TAU]
+    kd = " ".join(f"K{k}:{(csize == k).sum()}" for k in sorted(set(csize.tolist())))
+    print(f"\ncodeword K-dist (tau={TAU}): {kd}")
+    print(f"on-code  (> tau): mean={on_vals.mean():+.4f}  "
+          f"[{on_vals.min():+.3f}, {on_vals.max():+.3f}]")
+    print(f"off-code (<=tau): mean={off_vals.mean():+.4f}  "
+          f"[{off_vals.min():+.3f}, {off_vals.max():+.3f}]")
 
     ranks = np.arange(1, N + 1)
     fig, ax = plt.subplots(figsize=(8.5, 4.8))
@@ -48,9 +72,9 @@ def main():
     ax.legend(loc="upper right", fontsize=10, framealpha=0.95)
     ax.grid(alpha=0.3)
     fig.tight_layout()
-    FIG_OUT.parent.mkdir(exist_ok=True)
-    fig.savefig(FIG_OUT, dpi=130)
-    print(f"saved -> {FIG_OUT}")
+    fig_out.parent.mkdir(exist_ok=True)
+    fig.savefig(fig_out, dpi=130)
+    print(f"saved -> {fig_out}")
 
 
 if __name__ == "__main__":

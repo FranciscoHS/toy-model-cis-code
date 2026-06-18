@@ -5,6 +5,7 @@ For each model and each seed, the per-feature MSE is sorted descending; we
 then aggregate across seeds at each rank and plot the mean curve with a +/-1
 std band, plus faint per-seed curves underneath.
 """
+import argparse
 import json
 from pathlib import Path
 
@@ -23,10 +24,27 @@ def sorted_stats(mse):
 
 
 def main():
-    d = np.load(DATA, allow_pickle=True)
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--data", type=str, default=str(DATA))
+    ap.add_argument("--out", type=str, default=None)
+    args = ap.parse_args()
+    data_path = Path(args.data)
+    global FIG_OUT
+    FIG_OUT = Path(args.out) if args.out else (
+        Path("figures/per_feature_loss_embedded.png")
+        if "embedded" in data_path.name else FIG_OUT)
+
+    d = np.load(data_path, allow_pickle=True)
     meta = json.loads(str(d["meta"]))
-    mse_l2 = d["exp_2"][:N_SEEDS]
-    mse_l4 = d["exp_4"][:N_SEEDS]
+
+    def get_exp(e):  # keys may be 'exp_2' or 'exp_2.0' depending on run
+        for k in (f"exp_{e}", f"exp_{float(e)}", f"exp_{int(e)}"):
+            if k in d.files:
+                return d[k][:N_SEEDS]
+        raise KeyError(f"exponent {e} not in {data_path.name}: {d.files}")
+
+    mse_l2 = get_exp(2)
+    mse_l4 = get_exp(4)
     F = mse_l2.shape[1]
     ranks = np.arange(F)
 

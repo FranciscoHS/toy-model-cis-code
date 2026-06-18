@@ -23,11 +23,15 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from small_models import random_embedding
+
 F, N, P = 100, 50, 0.02
 STEPS = 100_000
 LR = 0.01
 BATCH = 8192
 MASTER_SEED = 0
+D_EMBED = 1000           # Braun et al. embedding dimension (0 = axis-aligned)
+EMBED_SEED = 12345       # fixed embedding shared across all seeds
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # eval set (shared across all nets for a clean comparison)
@@ -56,23 +60,29 @@ def make_eval_set(device):
     return batches
 
 
-def train_seeds(loss_exp, n_seeds, steps, device):
+def train_seeds(loss_exp, n_seeds, steps, device, W_E=None):
     """Train n_seeds nets for one loss exponent, vectorized over seeds.
 
-    Returns (W_in, W_out) with shapes [S, N, F] and [S, F, N].
+    With W_E (F, d) the model reads/writes a d-dim residual stream:
+        y = relu((x @ W_E) @ W_in.T) @ W_out.T @ W_E.T
+    W_in/W_out then have inner dim d instead of F. Returns (W_in, W_out) with
+    shapes [S, N, d] / [S, d, N]  (d = F when W_E is None).
     """
     torch.manual_seed(MASTER_SEED)
     S = n_seeds
-    W_in = (torch.rand(S, N, F, device=device) * 0.2 - 0.1).requires_grad_()
-    W_out = (torch.rand(S, F, N, device=device) * 0.3 - 0.15).requires_grad_()
+    d = F if W_E is None else W_E.shape[1]
+    W_in = (torch.rand(S, N, d, device=device) * 0.2 - 0.1).requires_grad_()
+    W_out = (torch.rand(S, d, N, device=device) * 0.3 - 0.15).requires_grad_()
     opt = torch.optim.Adam([W_in, W_out], lr=LR)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, steps)
 
     log_every = max(1, steps // 5)
     for step in range(steps):
         x, y = gen_batch(S, BATCH, device)
-        h = torch.relu(torch.einsum("snf,sbf->sbn", W_in, x))
-        out = torch.einsum("sfn,sbn->sbf", W_out, h)
+        r = x if W_E is None else x @ W_E               # [S,B,F] -> [S,B,d]
+        h = torch.relu(torch.einsum("snd,sbd->sbn", W_in, r))
+        out_r = torch.einsum("sdn,sbn->sbd", W_out, h)
+        out = out_r if W_E is None else out_r @ W_E.T    # [S,B,d] -> [S,B,F]
         loss = ((out - y).abs() ** loss_exp).mean()
         opt.zero_grad()
         loss.backward()
@@ -85,17 +95,19 @@ def train_seeds(loss_exp, n_seeds, steps, device):
 
 
 @torch.no_grad()
-def per_feature_mse(W_in, W_out, eval_set):
+def per_feature_mse(W_in, W_out, eval_set, W_E=None):
     """Per-feature MSE conditioned on the feature being active, per seed.
 
-    W_in:[S,N,F]  W_out:[S,F,N]  ->  [S, F].
+    W_in:[S,N,d]  W_out:[S,d,N]  ->  [S, F].
     """
     S = W_in.shape[0]
     err = torch.zeros(S, F, device=W_in.device)
     cnt = torch.zeros(F, device=W_in.device)
     for x, y in eval_set:                       # x,y: [B, F] shared
-        h = torch.relu(torch.einsum("snf,bf->sbn", W_in, x))
-        out = torch.einsum("sfn,sbn->sbf", W_out, h)
+        r = x if W_E is None else x @ W_E       # [B,F] -> [B,d]
+        h = torch.relu(torch.einsum("snd,bd->sbn", W_in, r))
+        out_r = torch.einsum("sdn,sbn->sbd", W_out, h)
+        out = out_r if W_E is None else out_r @ W_E.T
         active = (x > 0).float()                # [B, F]
         err += ((out - y) ** 2 * active.unsqueeze(0)).sum(dim=1)
         cnt += active.sum(dim=0)
@@ -109,17 +121,28 @@ def main():
     ap.add_argument("--seeds", type=int, default=10,
                     help="nets per exponent (fig1 uses 10; fig2 uses first 5)")
     ap.add_argument("--steps", type=int, default=STEPS)
-    ap.add_argument("--out", type=str, default="data/seed_experiments.npz")
+    ap.add_argument("--d-embed", type=int, default=D_EMBED,
+                    help="residual-stream dim for the fixed Braun embedding; "
+                         "0 = axis-aligned (original setup)")
+    ap.add_argument("--embed-seed", type=int, default=EMBED_SEED)
+    ap.add_argument("--out", type=str, default=None)
     args = ap.parse_args()
 
     print(f"device: {DEVICE}")
+    W_E = None
+    if args.d_embed > 0:
+        W_E = random_embedding(F, args.d_embed, args.embed_seed, device=DEVICE)
+        print(f"fixed embedding W_E {tuple(W_E.shape)} (seed {args.embed_seed}), "
+              f"shared across all seeds")
+    out_path = args.out or ("data/seed_experiments_embedded.npz" if W_E is not None
+                            else "data/seed_experiments.npz")
     eval_set = make_eval_set(DEVICE)
 
     perfeat = {}
     for exp in args.exponents:
         print(f"=== loss exponent {exp} ({args.seeds} seeds) ===", flush=True)
-        W_in, W_out = train_seeds(exp, args.seeds, args.steps, DEVICE)
-        mse = per_feature_mse(W_in, W_out, eval_set)        # [S, F]
+        W_in, W_out = train_seeds(exp, args.seeds, args.steps, DEVICE, W_E=W_E)
+        mse = per_feature_mse(W_in, W_out, eval_set, W_E=W_E)        # [S, F]
         cv = mse.std(axis=1, ddof=0) / mse.mean(axis=1)
         print(f"  per-feature MSE mean={mse.mean():.4e}  "
               f"CV per seed: mean={cv.mean():.3f} std={cv.std(ddof=1):.3f}",
@@ -130,9 +153,12 @@ def main():
                 master_seed=MASTER_SEED, seeds=args.seeds,
                 exponents=args.exponents, eval_seed=EVAL_SEED,
                 eval_batches=EVAL_BATCHES, eval_batch=EVAL_BATCH,
+                d_embed=(0 if W_E is None else args.d_embed),
+                embed_seed=args.embed_seed,
                 note="data streamed fresh per step; seeds vary init+data; "
-                     "eval set shared across all nets")
-    out = Path(args.out)
+                     "eval set shared across all nets; fixed Braun embedding "
+                     "shared across seeds when d_embed>0")
+    out = Path(out_path)
     out.parent.mkdir(exist_ok=True)
     np.savez(out, meta=json.dumps(meta),
              **{f"exp_{k}": v for k, v in perfeat.items()})
