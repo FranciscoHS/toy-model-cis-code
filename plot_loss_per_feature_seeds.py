@@ -27,6 +27,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data", type=str, default=str(DATA))
     ap.add_argument("--out", type=str, default=None)
+    ap.add_argument("--faint-exps", type=str, default="",
+                    help="comma-separated extra exponents to overlay faintly, "
+                         "e.g. 2.5,3,6,8")
+    ap.add_argument("--baseline-npz", type=str, default=None,
+                    help="feedback_experiments.npz; overlays the emulate-bias "
+                         "per-feature curve as a baseline")
     args = ap.parse_args()
     data_path = Path(args.data)
     global FIG_OUT
@@ -56,6 +62,17 @@ def main():
     c2, c4 = "#c8412c", "#3070b8"
     fig, ax = plt.subplots(figsize=(9, 4.6))
 
+    # faint curves for intermediate exponents (item 2)
+    faint = [e.strip() for e in args.faint_exps.split(",") if e.strip()]
+    for e in faint:
+        try:
+            _, mu_e, _ = sorted_stats(get_exp(float(e) if "." in e else e))
+        except KeyError as err:
+            print(f"  (skipping faint exp {e}: {err})"); continue
+        ax.plot(ranks, mu_e, color="#888888", lw=1.4, alpha=0.45, zorder=1)
+        ax.annotate(rf"L$^{{{e}}}$", (ranks[-1], mu_e[-1]), fontsize=8,
+                    color="#666666", alpha=0.8, ha="left", va="center")
+
     # mean over seeds at each sorted rank, +/- std as error bars (dots, no lines)
     ax.errorbar(ranks, mu2, yerr=sd2, color=c2, ls="none", marker="o",
                 markersize=4, alpha=0.85, elinewidth=1.0, capsize=0,
@@ -67,6 +84,13 @@ def main():
     # do-nothing baseline 1/3 = E[x^2 | x ~ Uniform(0,1)]
     ax.axhline(1.0 / 3.0, color="#444444", lw=1.6, ls=(0, (6, 4)), alpha=0.9,
                label=r"MSE on $x > 0$ samples if model outputs 0")
+
+    # emulate-bias baseline (item 1): naive + optimal offset, sorted descending
+    if args.baseline_npz:
+        b = np.load(args.baseline_npz, allow_pickle=True)
+        if "pf_bias" in b.files:
+            ax.plot(ranks, np.sort(b["pf_bias"])[::-1], color="#2ca02c", lw=2.0,
+                    ls=(0, (4, 2)), alpha=0.9, label="emulate-bias baseline")
     ax.set_xlabel(r"feature index (each model sorted descending by its own per-feature MSE)")
     ax.set_ylabel(r"per-feature MSE on $x > 0$ samples")
     ax.legend(loc="upper right", fontsize=10, framealpha=0.95)
