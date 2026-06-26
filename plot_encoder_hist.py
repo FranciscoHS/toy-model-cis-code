@@ -249,63 +249,51 @@ def plot_valuebox(W, nbins, fig_out):
     print(f"saved -> {fig_out}")
 
 
-def plot_valuedots(W, nbins, fig_out, scale="break", spread=True, barfrac=0.5):
-    """Pooled-count value histogram, bars at the bin MEAN, actual values scattered.
+def plot_valuedots(W, nbins, fig_out, scale="linear", spread=True, barfrac=1.0,
+                   step=0.05):
+    """Pooled-count value histogram with bin edges aligned to zero.
 
-    x = encoder entry value (nbins bins). Bar HEIGHT = overall count of entries in
-    the bin (pooled across all features, NOT per-feature). Each bar is centered on
-    the MEAN VALUE of the entries it contains (so the off-code bar sits at ~-0.017,
-    not at a bin midpoint). The actual entries are scattered at x = their true value
-    so you see the real value distribution; a vertical line marks the bin mean.
+    x = encoder entry value, binned in fixed steps of ``step`` with edges aligned
+    to 0 (so a bin boundary sits exactly at zero, separating negatives from
+    positives), each bin spanning ``step``. Bar HEIGHT = count of entries in the
+    bin (pooled across all 100 features); bars are drawn at their true bin width
+    (``barfrac=1.0``). The actual entries are also scattered at x = their true
+    value so the real distribution is visible. No bin-mean line.
 
-    scale: "break" (broken y so off-code ~4400 and on-code ~200-300 both show),
-           "linear" (single linear axis -- on-code looks tiny but it's honest),
-           "log"    (single log axis -- every bin visible without a break).
+    scale: "linear" (single axis -- on-code looks small but honest, default),
+           "break"  (broken y so off-code ~4400 and on-code ~200-300 both show),
+           "log"    (single log axis).
     spread: True scatters each entry at a random height filling its bar; False
-            collapses the scatter to a thin rug at the base (no vertical spread).
-    barfrac: bar width as a fraction of the bin width (smaller -> thinner bars,
-             less overlap between adjacent on-code bars)."""
+            collapses the scatter to a thin rug at the base.
+    barfrac: bar width as a fraction of the bin width (1.0 = bars are the bins)."""
     N, F = W.shape
     v = W.flatten()
-    edges = np.linspace(v.min(), v.max(), nbins + 1)
-    width = edges[1] - edges[0]; bw = width * barfrac
-    binidx = np.clip(np.digitize(v, edges) - 1, 0, nbins - 1)
-    n_b = np.array([(binidx == b).sum() for b in range(nbins)])
-    mean_b = np.array([v[binidx == b].mean() if (binidx == b).any()
-                       else 0.5 * (edges[b] + edges[b + 1]) for b in range(nbins)])
-
-    # each bar spans the actual min..max value of the entries in its bin, so every
-    # scatter dot (drawn at its true value) is contained by the bar and no dots
-    # appear "outside" a bin. minw gives single-/few-entry bins a visible width.
-    minw = width * 0.06
-    lo_v = np.array([v[binidx == b].min() if (binidx == b).any() else mean_b[b]
-                     for b in range(nbins)])
-    hi_v = np.array([v[binidx == b].max() if (binidx == b).any() else mean_b[b]
-                     for b in range(nbins)])
-    lefts = lo_v.copy(); widths = hi_v - lo_v
-    narrow = widths < minw
-    lefts[narrow] = mean_b[narrow] - minw / 2; widths[narrow] = minw
+    # bin edges aligned to 0 (a bin boundary sits exactly at zero); width = step
+    e0 = int(np.floor(v.min() / step))
+    e1 = int(np.ceil(v.max() / step))
+    edges = np.arange(e0, e1 + 1) * step
+    centers = (edges[:-1] + edges[1:]) / 2
+    nb = len(centers)
+    n_b, _ = np.histogram(v, bins=edges)
+    binidx = np.clip(np.digitize(v, edges) - 1, 0, nb - 1)
 
     log = (scale == "log")
-    base = 0.7 if log else 0.0                               # bar/line baseline
+    base = 0.7 if log else 0.0
     rng = np.random.default_rng(0)
     cnt = np.maximum(n_b[binidx], 1)
     if not spread:
-        yj = np.full(v.size, (base * 1.3 + 1.0) if log else 0.0)  # thin rug at base
+        yj = np.full(v.size, (base * 1.3 + 1.0) if log else 0.0)
     elif log:
-        yj = cnt.astype(float) ** rng.uniform(0, 1, size=v.size)  # log-uniform fill
+        yj = cnt.astype(float) ** rng.uniform(0, 1, size=v.size)
     else:
-        yj = rng.uniform(0, cnt)                            # linear fill [0, count]
+        yj = rng.uniform(0, cnt)
 
     def draw(ax):
-        ax.bar(lefts, n_b - base, width=widths, bottom=base, align="edge",
+        ax.bar(centers, n_b - base, width=step * barfrac, bottom=base,
                color="#cdddef", alpha=0.7, edgecolor="#3070b8", linewidth=0.8,
-               zorder=1, label="count of entries in bin")
+               zorder=1, label="Count of entries in bin")
         ms = 1.6 if spread else 2.2
         ax.plot(v, yj, "o", ms=ms, color="#3070b8", alpha=0.09, zorder=2)
-        for b in range(nbins):
-            ax.plot([mean_b[b], mean_b[b]], [base, n_b[b]], color="#c8412c", lw=1.8,
-                    alpha=0.9, zorder=3, solid_capstyle="round")
         ax.grid(alpha=0.3, axis="y")
 
     if scale == "break":
@@ -331,17 +319,18 @@ def plot_valuedots(W, nbins, fig_out, scale="break", spread=True, barfrac=0.5):
             ax.set_ylim(0, n_b.max() * 1.06)
         legax, xax = ax, ax
 
-    legax.plot([], [], color="#c8412c", lw=1.8, label="bin mean value")
     legax.plot([], [], "o", ms=5, color="#3070b8", alpha=0.5,
-               label="encoder entry (true value)")
+               label="Encoder entry (true value)")
     legax.legend(loc="upper right", fontsize=9.5, framealpha=0.95)
-    xax.set_xlabel("encoder entry value")
-    fig.supylabel("count of encoder entries (pooled over all features)", fontsize=11)
+    t0 = np.floor(edges[0] / 0.1) * 0.1
+    xax.set_xticks(np.round(np.arange(t0, edges[-1] + 1e-9 + 0.1, 0.1), 1))
+    xax.set_xlabel("Encoder entry value")
+    fig.supylabel("Count of encoder entries (pooled over all features)", fontsize=11)
     fig.tight_layout()
     fig.savefig(fig_out, dpi=130)
-    print(f"[scale={scale} spread={spread}] value-bin pooled counts:")
-    for b in range(nbins):
-        print(f"  [{edges[b]:+.3f},{edges[b+1]:+.3f}] mean_val={mean_b[b]:+.4f}: n={n_b[b]}")
+    print(f"[scale={scale} spread={spread}] decimal-centered pooled counts:")
+    for c, n in zip(centers, n_b):
+        print(f"  value ~{c:+.1f}: n={n}")
     print(f"saved -> {fig_out}")
 
 
@@ -374,31 +363,31 @@ def plot_kdist(W, fig_out, tau=0.05, axis="col"):
         axR = axL.twinx()
         cc = bars(axL, Kc, BLUE, F)
         rc = bars(axR, Kr, RED, N)
-        axL.set_ylabel("number of feature columns", color=BLUE)
-        axR.set_ylabel("number of neuron rows", color=RED)
+        axL.set_ylabel(r"Count of features with $n$ entries", color=BLUE)
+        axR.set_ylabel(r"Count of neurons with $n$ entries", color=RED)
         axL.tick_params(axis="y", colors=BLUE); axR.tick_params(axis="y", colors=RED)
         axL.spines["left"].set_color(BLUE); axR.spines["right"].set_color(RED)
         ticks = np.arange(min(cc.min(), rc.min()), max(cc.max(), rc.max()) + 1)
         handles = [Patch(facecolor=BLUE, alpha=0.55, edgecolor=BLUE,
-                         label=f"per feature column:  {Kc.mean():.1f} ± {Kc.std():.1f}"),
+                         label=f"Per feature column:  {Kc.mean():.1f} ± {Kc.std():.1f}"),
                    Patch(facecolor=RED, alpha=0.55, edgecolor=RED,
-                         label=f"per neuron row:  {Kr.mean():.1f} ± {Kr.std():.1f}")]
+                         label=f"Per neuron row:  {Kr.mean():.1f} ± {Kr.std():.1f}")]
         axL.legend(handles=handles, loc="upper center", fontsize=9.5,
-                   framealpha=0.95, title="encoder large-entry count")
+                   framealpha=0.95, title="Encoder large-entry count")
         xax = axL
     else:
         K, color, lab, ntot = ((Kc, BLUE, "feature column", F) if axis == "col"
                                else (Kr, RED, "neuron row", N))
         fig, ax = plt.subplots(figsize=(6.2, 4.4))
         ticks = bars(ax, K, color, ntot)
-        ax.set_ylabel(f"number of {lab}s")
+        ax.set_ylabel(rf"Count of {lab}s with $n$ entries")
         ax.legend(handles=[Patch(facecolor=color, alpha=0.55, edgecolor=color,
                                  label=f"mean = {K.mean():.2f} ± {K.std():.2f}")],
                   loc="upper right", fontsize=10, framealpha=0.95)
         xax = ax
 
     xax.set_xticks(ticks)
-    xax.set_xlabel(f"number of large entries  (w > {tau})")
+    xax.set_xlabel(rf"Number of large entries $n$  ($w > {tau}$)")
     xax.grid(alpha=0.3, axis="y")
     fig.tight_layout()
     fig.savefig(fig_out, dpi=130)
@@ -423,7 +412,7 @@ def main():
                     help="valuedots mode: y-axis style")
     ap.add_argument("--nospread", action="store_true",
                     help="valuedots mode: collapse scatter to a base rug")
-    ap.add_argument("--barfrac", type=float, default=0.5,
+    ap.add_argument("--barfrac", type=float, default=1.0,
                     help="valuedots mode: bar width as fraction of bin width")
     ap.add_argument("--out", type=str, default=None)
     args = ap.parse_args()

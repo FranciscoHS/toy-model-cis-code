@@ -11,6 +11,7 @@ For each (code, K, seed) we fit the same 3-parameter model used elsewhere:
 and report total mean L4 loss on a held-out batch. Results are written to
 ``data/sweep_K_codes.json`` so the plotter can run separately.
 """
+import argparse
 import json
 import time
 import numpy as np
@@ -59,8 +60,16 @@ def train_3param(M, x_tr, y_tr, x_ev, y_ev, steps=STEPS):
 
 
 def main():
-    print(f"device: {DEVICE}")
-    OUT.parent.mkdir(exist_ok=True)
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--swaps", type=int, default=SWAPS,
+                    help="reduce_overlap iterations (0 = no edge-swap / no overlap minimization)")
+    ap.add_argument("--out", type=str, default=str(OUT))
+    args = ap.parse_args()
+    swaps = args.swaps
+    out_path = Path(args.out)
+
+    print(f"device: {DEVICE}  swaps={swaps}  out={out_path}")
+    out_path.parent.mkdir(exist_ok=True)
     torch.manual_seed(31337)
     x_tr, y_tr = generate_batch(TRAIN_SAMPLES, F, P)
     x_ev, y_ev = generate_batch(EVAL_SAMPLES, F, P)
@@ -76,7 +85,7 @@ def main():
     results = {
         "meta": dict(
             F=F, N=N, P=P, K_list=K_LIST, seeds=SEEDS,
-            steps=STEPS, swaps=SWAPS,
+            steps=STEPS, swaps=swaps,
             train_samples=TRAIN_SAMPLES, eval_samples=EVAL_SAMPLES,
             l4_trained_100k=l4_trained,
         ),
@@ -93,7 +102,7 @@ def main():
                     base = regular_code(F, N, K, seed)
                 else:
                     base = random_code(F, N, K, seed)
-                M = reduce_overlap(base, SWAPS, seed=10 + seed)
+                M = base if swaps == 0 else reduce_overlap(base, swaps, seed=10 + seed)
                 ov = M.astype(int) @ M.astype(int).T
                 np.fill_diagonal(ov, 0)
                 sq = int((ov ** 2).sum())
@@ -111,9 +120,9 @@ def main():
                 losses=losses, params=params, sq=sqs, maxov=maxovs,
             )
 
-    with open(OUT, "w") as f:
+    with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
-    print(f"\nsaved {OUT}  (elapsed {time.time() - t0:.0f}s)")
+    print(f"\nsaved {out_path}  (elapsed {time.time() - t0:.0f}s)")
 
 
 if __name__ == "__main__":

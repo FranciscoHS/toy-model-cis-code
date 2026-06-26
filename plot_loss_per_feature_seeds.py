@@ -74,29 +74,42 @@ def main():
         except KeyError as err:
             print(f"  (skipping faint exp {e}: {err})"); continue
         ax.plot(ranks, mu_e, "o", markersize=3, color=exp_colors[i % len(exp_colors)],
-                alpha=0.8, zorder=1, label=rf"trained with L$^{{{e}}}$")
+                alpha=0.8, zorder=1, label=rf"Trained with L$^{{{e}}}$")
 
     # mean over seeds at each sorted rank, +/- std as error bars (dots, no lines)
     ax.errorbar(ranks, mu2, yerr=sd2, color=c2, ls="none", marker="o",
                 markersize=4, alpha=0.85, elinewidth=1.0, capsize=0,
-                label=r"trained with L$^2$")
+                label=r"Trained with L$^2$")
     ax.errorbar(ranks, mu4, yerr=sd4, color=c4, ls="none", marker="o",
                 markersize=4, alpha=0.85, elinewidth=1.0, capsize=0,
-                label=r"trained with L$^4$")
+                label=r"Trained with L$^4$")
 
     # do-nothing baseline 1/3 = E[x^2 | x ~ Uniform(0,1)]: light red, dashed
     ax.axhline(1.0 / 3.0, color="#fb6a4a", lw=1.6, ls=(0, (6, 4)), alpha=0.95,
-               label=r"MSE on $x > 0$ samples if model outputs 0")
+               label=r"MSE on $x > 0$ samples if model outputs 0")  # do-nothing
 
     # emulate-bias baseline (item 1): naive + optimal offset, mid red
     if args.baseline_npz:
         b = np.load(args.baseline_npz, allow_pickle=True)
         if "pf_bias" in b.files:
             ax.plot(ranks, np.sort(b["pf_bias"])[::-1], "o", markersize=4,
-                    color="#de2d26", alpha=0.85, label="emulate-bias baseline")
-    ax.set_xlabel(r"feature index (each model sorted descending by its own per-feature MSE)")
-    ax.set_ylabel(r"per-feature MSE on $x > 0$ samples")
-    ax.legend(loc="upper right", fontsize=10, framealpha=0.95)
+                    color="#de2d26", alpha=0.85, label="Emulate-bias baseline")
+    ax.set_xlabel(r"Feature index (each model sorted descending by its own per-feature MSE)")
+    ax.set_ylabel(r"Per-feature MSE on $x > 0$ samples")
+    # legend ordered: no-superposition baselines (red) first, then superposition (blue)
+    # note: faint exps render with braces (L$^{3}$), the two heroes without (L$^2$)
+    _order = {
+        r"MSE on $x > 0$ samples if model outputs 0": 0,
+        "Emulate-bias baseline": 1,
+        r"Trained with L$^2$": 2,
+        r"Trained with L$^{3}$": 3,
+        r"Trained with L$^4$": 4,
+        r"Trained with L$^{6}$": 5,
+    }
+    _h, _l = ax.get_legend_handles_labels()
+    _pairs = sorted(zip(_h, _l), key=lambda hl: _order.get(hl[1], 99))
+    ax.legend([h for h, _ in _pairs], [l for _, l in _pairs],
+              loc="upper right", fontsize=10, framealpha=0.95)
     ax.grid(alpha=0.3, which="both")
     fig.tight_layout()
     FIG_OUT.parent.mkdir(exist_ok=True)
