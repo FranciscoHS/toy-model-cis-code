@@ -77,21 +77,35 @@ def train_seeds(loss_exp, n_seeds, steps, device, W_E=None):
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, steps)
 
     log_every = max(1, steps // 5)
+    hist_every = 10                 # loss curve resolution (no host sync)
+    loss_hist = []
     for step in range(steps):
         x, y = gen_batch(S, BATCH, device)
         r = x if W_E is None else x @ W_E               # [S,B,F] -> [S,B,d]
         h = torch.relu(torch.einsum("snd,sbd->sbn", W_in, r))
         out_r = torch.einsum("sdn,sbn->sbd", W_out, h)
         out = out_r if W_E is None else out_r @ W_E.T    # [S,B,d] -> [S,B,F]
-        loss = ((out - y).abs() ** loss_exp).mean()
+        err = (out - y).abs()
+        if loss_exp > 8:
+            # Large p needs two fixes: float64 (float32 underflows |err|^p to
+            # zero gradient once err < ~0.4 for p=100) and minimizing the
+            # p-norm mean(err^p)^(1/p) instead of mean(err^p) — same minimizer,
+            # but raw gradients scale like p*err^(p-1) and diverge as soon as
+            # any err > 1, which NaNs the run.
+            loss = (err.double() ** loss_exp).mean() ** (1.0 / loss_exp)
+        else:
+            loss = (err ** loss_exp).mean()
         opt.zero_grad()
         loss.backward()
         opt.step()
         sched.step()
+        if step % hist_every == 0:
+            loss_hist.append(loss.detach())
         if (step + 1) % log_every == 0 or step + 1 == steps:
             print(f"  exp={loss_exp:<4} step {step + 1:>6}/{steps}  "
                   f"L{loss_exp} = {loss.item():.4e}", flush=True)
-    return W_in.detach(), W_out.detach()
+    loss_hist = torch.stack(loss_hist).float().cpu().numpy()
+    return W_in.detach(), W_out.detach(), loss_hist
 
 
 @torch.no_grad()
@@ -126,6 +140,9 @@ def main():
                          "0 = axis-aligned (original setup)")
     ap.add_argument("--embed-seed", type=int, default=EMBED_SEED)
     ap.add_argument("--out", type=str, default=None)
+    ap.add_argument("--save-weights", type=str, default=None, metavar="DIR",
+                    help="also save trained W_in/W_out (all seeds) per "
+                         "exponent as a .pt in DIR")
     args = ap.parse_args()
 
     print(f"device: {DEVICE}")
@@ -141,13 +158,26 @@ def main():
     perfeat = {}
     for exp in args.exponents:
         print(f"=== loss exponent {exp} ({args.seeds} seeds) ===", flush=True)
-        W_in, W_out = train_seeds(exp, args.seeds, args.steps, DEVICE, W_E=W_E)
+        W_in, W_out, loss_hist = train_seeds(exp, args.seeds, args.steps,
+                                             DEVICE, W_E=W_E)
         mse = per_feature_mse(W_in, W_out, eval_set, W_E=W_E)        # [S, F]
         cv = mse.std(axis=1, ddof=0) / mse.mean(axis=1)
         print(f"  per-feature MSE mean={mse.mean():.4e}  "
               f"CV per seed: mean={cv.mean():.3f} std={cv.std(ddof=1):.3f}",
               flush=True)
         perfeat[str(exp)] = mse
+        if args.save_weights:
+            wdir = Path(args.save_weights)
+            wdir.mkdir(exist_ok=True)
+            wpath = wdir / (f"seedexp_100f_50n_L{exp:g}_{args.seeds}seeds_"
+                            f"{args.steps}steps.pt")
+            torch.save({"W_in": W_in.cpu(), "W_out": W_out.cpu(),
+                        "loss_exp": exp, "seeds": args.seeds,
+                        "steps": args.steps, "master_seed": MASTER_SEED,
+                        "d_embed": 0 if W_E is None else args.d_embed,
+                        "embed_seed": args.embed_seed,
+                        "loss_hist": loss_hist, "loss_hist_every": 10}, wpath)
+            print(f"  weights -> {wpath}", flush=True)
 
     meta = dict(F=F, N=N, P=P, steps=args.steps, lr=LR, batch=BATCH,
                 master_seed=MASTER_SEED, seeds=args.seeds,
